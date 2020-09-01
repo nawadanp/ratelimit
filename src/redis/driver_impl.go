@@ -3,6 +3,7 @@ package redis
 import (
 	"crypto/tls"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mediocregopher/radix/v3/trace"
@@ -52,7 +53,7 @@ func checkError(err error) {
 }
 
 func NewClientImpl(scope stats.Scope, useTls bool, auth string, url string, poolSize int,
-	pipelineWindow time.Duration, pipelineLimit int) Client {
+	pipelineWindow time.Duration, pipelineLimit int, redisType string, sentinelName string) Client {
 	logger.Warnf("connecting to redis on %s with pool size %d", url, poolSize)
 
 	df := func(network, addr string) (radix.Conn, error) {
@@ -78,17 +79,26 @@ func NewClientImpl(scope stats.Scope, useTls bool, auth string, url string, pool
 	stats := newPoolStats(scope)
 
 	opts := []radix.PoolOpt{radix.PoolConnFunc(df), radix.PoolWithTrace(poolTrace(&stats))}
-
 	implicitPipelining := true
 	if pipelineWindow == 0 && pipelineLimit == 0 {
 		implicitPipelining = false
 	} else {
 		opts = append(opts, radix.PoolPipelineWindow(pipelineWindow, pipelineLimit))
 	}
+	if redisType == "sentinel" {
+		optsSentinel := []radix.SentinelOpt{radix.SentinelConnFunc(df)}
+		addresses := strings.Split(url, ",")
+		sentinelObj, err := radix.NewSentinel( sentinelName, addresses, optsSentinel...)
+		checkError(err)
+		url, _ = sentinelObj.Addrs()
+		checkError(err)
 
-	// TODO: support sentinel and redis cluster
+	}
 	pool, err := radix.NewPool("tcp", url, poolSize, opts...)
+
+
 	checkError(err)
+
 
 	// Check if connection is good
 	var pingResponse string
